@@ -1,0 +1,20 @@
+{
+  "name": "stc-mandi-server",
+  "version": "1.0.0",
+  "description": "STC Mandi Intelligence Agent — WhatsApp to Supabase pipeline",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["mandi", "agri", "commodity", "india"],
+  "author": "STC",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@supabase/supabase-js": "^2.49.4",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "twilio": "^5.7.0"
+  }
+}
