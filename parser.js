@@ -240,3 +240,48 @@ async function parseMessage(messageText) {
 }
 
 module.exports = { parseMessage };
+
+// Parse an image using Claude vision
+async function parseImage(imageBase64, mediaType) {
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4000,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: mediaType || "image/jpeg",
+                data: imageBase64,
+              },
+            },
+            {
+              type: "text",
+              text: "Parse this Aayush SMS market price image and return structured JSON:",
+            },
+          ],
+        },
+      ],
+    });
+
+    const rawText = response.content[0].text.trim();
+    const jsonText = rawText
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+
+    const parsed = JSON.parse(jsonText);
+    return { success: true, data: parsed };
+  } catch (error) {
+    console.error("Image parser error:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+module.exports = { parseMessage, parseImage };
