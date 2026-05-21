@@ -1,4 +1,4 @@
-// v3 - clean rewrite
+// v4
 const express = require("express");
 const { parseMessage, parseImage } = require("./parser");
 const { saveRawMessage, markParsed, saveAllParsedData } = require("./db");
@@ -11,6 +11,32 @@ app.get("/", (req, res) => {
   res.json({ status: "STC Mandi Agent running", timestamp: new Date().toISOString() });
 });
 
+async function downloadMedia(mediaUrl) {
+  // Twilio media URLs need account SID/auth token as Basic auth
+  // The URL format is: https://api.twilio.com/2010-04-01/Accounts/{SID}/Messages/{SID}/Media/{SID}
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  
+  // Use Twilio's API URL directly with credentials embedded
+  const urlObj = new URL(mediaUrl);
+  const authUrl = `${urlObj.protocol}//${sid}:${token}@${urlObj.host}${urlObj.pathname}`;
+  
+  const resp = await fetch(authUrl, { redirect: "follow" });
+  if (!resp.ok) {
+    // Try alternate approach - fetch with Basic auth header
+    const creds = Buffer.from(`${sid}:${token}`).toString("base64");
+    const resp2 = await fetch(mediaUrl, {
+      headers: { "Authorization": `Basic ${creds}` },
+      redirect: "follow",
+    });
+    if (!resp2.ok) throw new Error(`Image download failed: ${resp2.status}`);
+    const buf = await resp2.arrayBuffer();
+    return Buffer.from(buf).toString("base64");
+  }
+  const buf = await resp.arrayBuffer();
+  return Buffer.from(buf).toString("base64");
+}
+
 app.post("/webhook", async (req, res) => {
   res.set("Content-Type", "text/xml");
   res.send("<Response></Response>");
@@ -22,6 +48,7 @@ app.post("/webhook", async (req, res) => {
   const mediaType = req.body.MediaContentType0 || null;
 
   console.log(`[${new Date().toISOString()}] From: ${sender}, Media: ${numMedia}, Text: "${messageText.substring(0, 50)}"`);
+  console.log(`MediaUrl: ${mediaUrl ? mediaUrl.substring(0, 80) : 'none'}`);
 
   if (!messageText.trim() && numMedia === 0) return;
 
@@ -37,20 +64,8 @@ app.post("/webhook", async (req, res) => {
     let result;
 
     if (numMedia > 0 && mediaUrl && mediaType && mediaType.startsWith("image/")) {
-      console.log(`Image received, downloading...`);
-      const sid = process.env.TWILIO_ACCOUNT_SID;
-      const token = process.env.TWILIO_AUTH_TOKEN;
-      const creds = Buffer.from(`${sid}:${token}`).toString("base64");
-      
-      const resp = await fetch(mediaUrl, {
-        headers: { "Authorization": `Basic ${creds}` },
-        redirect: "follow",
-      });
-
-      if (!resp.ok) throw new Error(`Image download failed: ${resp.status}`);
-      
-      const buf = await resp.arrayBuffer();
-      const b64 = Buffer.from(buf).toString("base64");
+      console.log(`Downloading image...`);
+      const b64 = await downloadMedia(mediaUrl);
       console.log(`Downloaded ${Math.round(b64.length * 0.75 / 1024)}KB, parsing...`);
       result = await parseImage(b64, mediaType);
     } else {
