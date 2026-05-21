@@ -1,13 +1,19 @@
 const { createClient } = require("@supabase/supabase-js");
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+// Lazy client — created on first use so env vars are available
+let _supabase = null;
+function supabase() {
+  if (!_supabase) {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_KEY;
+    if (!url || !key) throw new Error(`Missing Supabase env vars. URL=${url} KEY=${key ? 'set' : 'missing'}`);
+    _supabase = createClient(url, key);
+  }
+  return _supabase;
+}
 
-// Save raw message first, return its ID
 async function saveRawMessage({ sender, messageText, source, messageType, market, messageDate }) {
-  const { data, error } = await supabase
+  const { data, error } = await supabase()
     .from("raw_messages")
     .insert({
       sender,
@@ -28,19 +34,13 @@ async function saveRawMessage({ sender, messageText, source, messageType, market
   return data.id;
 }
 
-// Mark raw message as parsed (or failed)
 async function markParsed(rawMessageId, success, parseErrors = null) {
-  await supabase
+  await supabase()
     .from("raw_messages")
-    .update({
-      parsed: success,
-      parse_errors: parseErrors,
-      message_type: success ? undefined : "parse_failed",
-    })
+    .update({ parsed: success, parse_errors: parseErrors })
     .eq("id", rawMessageId);
 }
 
-// Insert mandi_prices rows
 async function savePrices(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -62,12 +62,10 @@ async function savePrices(rows, rawMessageId, messageDate) {
     notes: r.notes || null,
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("mandi_prices").insert(inserts);
+  const { error } = await supabase().from("mandi_prices").insert(inserts);
   if (error) console.error("Error saving mandi_prices:", error.message);
 }
 
-// Insert container_rates rows
 async function saveContainerRates(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -80,12 +78,10 @@ async function saveContainerRates(rows, rawMessageId, messageDate) {
     market: r.market || "Indore",
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("container_rates").insert(inserts);
+  const { error } = await supabase().from("container_rates").insert(inserts);
   if (error) console.error("Error saving container_rates:", error.message);
 }
 
-// Insert arrivals rows
 async function saveArrivals(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -97,12 +93,10 @@ async function saveArrivals(rows, rawMessageId, messageDate) {
     high_price: r.high_price || null,
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("arrivals").insert(inserts);
+  const { error } = await supabase().from("arrivals").insert(inserts);
   if (error) console.error("Error saving arrivals:", error.message);
 }
 
-// Insert trade_prices rows
 async function saveTradePrices(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -123,12 +117,10 @@ async function saveTradePrices(rows, rawMessageId, messageDate) {
     notes: r.notes || null,
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("trade_prices").insert(inserts);
+  const { error } = await supabase().from("trade_prices").insert(inserts);
   if (error) console.error("Error saving trade_prices:", error.message);
 }
 
-// Insert mill_rates rows
 async function saveMillRates(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -144,12 +136,10 @@ async function saveMillRates(rows, rawMessageId, messageDate) {
     notes: r.notes || null,
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("mill_rates").insert(inserts);
+  const { error } = await supabase().from("mill_rates").insert(inserts);
   if (error) console.error("Error saving mill_rates:", error.message);
 }
 
-// Insert regional_mandi rows
 async function saveRegionalMandi(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -166,12 +156,10 @@ async function saveRegionalMandi(rows, rawMessageId, messageDate) {
     notes: r.notes || null,
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("regional_mandi").insert(inserts);
+  const { error } = await supabase().from("regional_mandi").insert(inserts);
   if (error) console.error("Error saving regional_mandi:", error.message);
 }
 
-// Insert spot_prices rows
 async function saveSpotPrices(rows, rawMessageId, messageDate) {
   if (!rows || rows.length === 0) return;
   const inserts = rows.map((r) => ({
@@ -183,15 +171,12 @@ async function saveSpotPrices(rows, rawMessageId, messageDate) {
     market: r.market || "Indore",
     raw_message_id: rawMessageId,
   }));
-
-  const { error } = await supabase.from("spot_prices").insert(inserts);
+  const { error } = await supabase().from("spot_prices").insert(inserts);
   if (error) console.error("Error saving spot_prices:", error.message);
 }
 
-// Master function — saves everything from one parsed message
 async function saveAllParsedData(rawMessageId, parsedData) {
   const date = parsedData.message_date;
-
   await Promise.all([
     savePrices(parsedData.mandi_prices, rawMessageId, date),
     saveContainerRates(parsedData.container_rates, rawMessageId, date),
@@ -202,8 +187,7 @@ async function saveAllParsedData(rawMessageId, parsedData) {
     saveSpotPrices(parsedData.spot_prices, rawMessageId, date),
   ]);
 
-  // Update raw_messages with detected type and market
-  await supabase
+  await supabase()
     .from("raw_messages")
     .update({
       parsed: true,
@@ -214,8 +198,4 @@ async function saveAllParsedData(rawMessageId, parsedData) {
     .eq("id", rawMessageId);
 }
 
-module.exports = {
-  saveRawMessage,
-  markParsed,
-  saveAllParsedData,
-};
+module.exports = { saveRawMessage, markParsed, saveAllParsedData };
