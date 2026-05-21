@@ -239,7 +239,6 @@ async function parseMessage(messageText) {
   }
 }
 
-module.exports = { parseMessage };
 
 // Parse an image using Claude vision
 async function parseImage(imageBase64, mediaType) {
