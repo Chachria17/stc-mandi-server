@@ -1,5 +1,4 @@
 const express = require("express");
-const axios = require("axios");
 const { parseMessage, parseImage } = require("./parser");
 const { saveRawMessage, markParsed, saveAllParsedData } = require("./db");
 
@@ -11,16 +10,23 @@ app.get("/", (req, res) => {
   res.json({ status: "STC Mandi Agent running", timestamp: new Date().toISOString() });
 });
 
+// Use built-in fetch (Node 22) with Twilio auth
 async function downloadTwilioImage(mediaUrl) {
-  const response = await axios.get(mediaUrl, {
-    auth: {
-      username: process.env.TWILIO_ACCOUNT_SID,
-      password: process.env.TWILIO_AUTH_TOKEN,
-    },
-    responseType: "arraybuffer",
-    maxRedirects: 5,
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+
+  const response = await fetch(mediaUrl, {
+    headers: { "Authorization": `Basic ${credentials}` },
+    redirect: "follow",
   });
-  return Buffer.from(response.data).toString("base64");
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} downloading image`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer).toString("base64");
 }
 
 app.post("/webhook", async (req, res) => {
@@ -35,7 +41,7 @@ app.post("/webhook", async (req, res) => {
 
   console.log(`\n[${new Date().toISOString()}] Message from ${sender}`);
   console.log(`Text: "${messageText.substring(0, 100)}"`);
-  console.log(`Media: ${numMedia} item(s), type: ${mediaType}, url: ${mediaUrl ? mediaUrl.substring(0, 60) : 'none'}`);
+  console.log(`Media: ${numMedia} item(s), type: ${mediaType}`);
 
   if (!messageText.trim() && numMedia === 0) {
     console.log("Empty message, skipping.");
@@ -55,7 +61,7 @@ app.post("/webhook", async (req, res) => {
     let result;
 
     if (numMedia > 0 && mediaUrl && mediaType && mediaType.startsWith("image/")) {
-      console.log(`Downloading image via axios...`);
+      console.log(`Downloading image...`);
       const imageBase64 = await downloadTwilioImage(mediaUrl);
       console.log(`Image downloaded (${Math.round(imageBase64.length * 0.75 / 1024)}KB), sending to Claude...`);
       result = await parseImage(imageBase64, mediaType);
