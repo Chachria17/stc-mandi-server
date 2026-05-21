@@ -1,3 +1,4 @@
+//v2
 const express = require("express");
 const { parseMessage, parseImage } = require("./parser");
 const { saveRawMessage, markParsed, saveAllParsedData } = require("./db");
