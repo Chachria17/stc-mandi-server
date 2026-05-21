@@ -1,6 +1,7 @@
 // Railway injects env vars natively — no dotenv needed
 const express = require("express");
-const { parseMessage } = require("./parser");
+const https = require("https");
+const { parseMessage, parseImage } = require("./parser");
 const { saveRawMessage, markParsed, saveAllParsedData } = require("./db");
 
 const app = express();
@@ -14,20 +15,48 @@ app.get("/", (req, res) => {
   res.json({ status: "STC Mandi Agent running", timestamp: new Date().toISOString() });
 });
 
+// Download image from Twilio URL as base64
+function downloadImage(url) {
+  return new Promise((resolve, reject) => {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+
+    const options = new URL(url);
+    const reqOptions = {
+      hostname: options.hostname,
+      path: options.pathname + options.search,
+      headers: { Authorization: `Basic ${auth}` },
+    };
+
+    https.get(reqOptions, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const buffer = Buffer.concat(chunks);
+        resolve(buffer.toString("base64"));
+      });
+      response.on("error", reject);
+    }).on("error", reject);
+  });
+}
+
 // Main webhook — Twilio posts here when a WhatsApp message arrives
 app.post("/webhook", async (req, res) => {
-  // Respond immediately to Twilio (must be within 15 seconds)
   res.set("Content-Type", "text/xml");
   res.send("<Response></Response>");
 
-  // Process asynchronously
   const sender = req.body.From || "unknown";
   const messageText = req.body.Body || "";
+  const numMedia = parseInt(req.body.NumMedia || "0");
+  const mediaUrl = req.body.MediaUrl0 || null;
+  const mediaType = req.body.MediaContentType0 || null;
 
   console.log(`\n[${new Date().toISOString()}] Message from ${sender}`);
-  console.log(`Text: ${messageText.substring(0, 100)}...`);
+  console.log(`Text: ${messageText.substring(0, 100)}`);
+  console.log(`Media: ${numMedia} item(s), type: ${mediaType}`);
 
-  if (!messageText.trim()) {
+  if (!messageText.trim() && numMedia === 0) {
     console.log("Empty message, skipping.");
     return;
   }
@@ -35,17 +64,30 @@ app.post("/webhook", async (req, res) => {
   let rawMessageId = null;
 
   try {
-    // Step 1: Save raw message immediately
+    // Save raw message
     rawMessageId = await saveRawMessage({
       sender,
-      messageText,
+      messageText: messageText || `[image: ${mediaUrl}]`,
       source: "whatsapp",
     });
     console.log(`Raw message saved: ${rawMessageId}`);
 
-    // Step 2: Parse with Claude
-    console.log("Sending to Claude for parsing...");
-    const result = await parseMessage(messageText);
+    let result;
+
+    if (numMedia > 0 && mediaUrl && mediaType && mediaType.startsWith("image/")) {
+      // Image message — download and send to Claude vision
+      console.log(`Downloading image from Twilio...`);
+      const imageBase64 = await downloadImage(mediaUrl);
+      console.log(`Image downloaded, sending to Claude vision...`);
+      result = await parseImage(imageBase64, mediaType);
+    } else if (messageText.trim()) {
+      // Text message
+      console.log("Sending text to Claude for parsing...");
+      result = await parseMessage(messageText);
+    } else {
+      console.log("No text or image to parse.");
+      return;
+    }
 
     if (!result.success) {
       console.error("Parse failed:", result.error);
@@ -54,8 +96,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     console.log(`Parsed as: ${result.data.message_type} | Market: ${result.data.primary_market}`);
-
-    // Step 3: Save all structured data
     await saveAllParsedData(rawMessageId, result.data);
     console.log(`All data saved successfully for message ${rawMessageId}`);
 
@@ -67,25 +107,16 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Manual test endpoint — POST a message text to test parsing without WhatsApp
+// Manual test endpoint
 app.post("/test", async (req, res) => {
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: "Provide text field" });
 
-  console.log(`\n[TEST] Parsing message...`);
   const result = await parseMessage(text);
+  if (!result.success) return res.status(500).json({ error: result.error });
 
-  if (!result.success) {
-    return res.status(500).json({ error: result.error });
-  }
-
-  // Also save to DB if test=true and save=true
   if (req.body.save === "true") {
-    const rawId = await saveRawMessage({
-      sender: "test",
-      messageText: text,
-      source: "manual_test",
-    });
+    const rawId = await saveRawMessage({ sender: "test", messageText: text, source: "manual_test" });
     await saveAllParsedData(rawId, result.data);
     result.data._saved_id = rawId;
   }
