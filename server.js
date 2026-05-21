@@ -1,4 +1,4 @@
-require("dotenv").config();
+// Railway injects env vars natively — no dotenv needed
 const express = require("express");
 const { parseMessage } = require("./parser");
 const { saveRawMessage, markParsed, saveAllParsedData } = require("./db");
